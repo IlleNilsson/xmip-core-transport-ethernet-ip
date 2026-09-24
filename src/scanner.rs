@@ -6,6 +6,7 @@ use std::io::Write;
 use std::net::TcpStream;
 use std::time::Duration;
 
+use transport::ceiling;
 use transport::error::{Result, classify, protocol_error};
 use transport::socket;
 
@@ -62,12 +63,7 @@ impl Scanner {
     /// # Errors
     /// Over the [`CEILING`], or an adapter that refused or went away.
     pub fn set(&mut self, instance: u8, bytes: &[u8]) -> Result<()> {
-        if bytes.len() > CEILING {
-            return Err(protocol_error(format!(
-                "{} bytes is over the {CEILING} one set carries",
-                bytes.len()
-            )));
-        }
+        ceiling::within(bytes.len(), CEILING, "one set carries")?;
         self.explicit(SET_ATTRIBUTE_SINGLE, instance, bytes)?;
         Ok(())
     }
