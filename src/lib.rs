@@ -30,6 +30,7 @@ pub use adapter::Adapter;
 pub use cip::{Path, Reply, Request};
 pub use encapsulation::Packet;
 pub use scanner::Scanner;
+use transport::ceiling;
 use transport::error::{Result, protocol_error};
 use transport::listening::{Accepting, Listening};
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
@@ -154,7 +155,7 @@ impl EtherNetIpTransport {
 }
 
 impl Accepting for EtherNetIpTransport {
-    fn take_one(&self, listener: &TcpListener) -> Result<Arrived> {
+    fn take_one(self, listener: &TcpListener) -> Result<Arrived> {
         let instance = self.instance;
         let mut adapter = self
             .accept_one(listener)?
@@ -176,17 +177,11 @@ impl Loopback for EtherNetIpTransport {
     }
 
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
-        let (listener, address) = self.bind()?;
-        Ok(Box::new(Listening::new(self.clone(), listener, address)))
+        Ok(Box::new(Listening::new(self.clone(), self.bind()?)))
     }
 
     fn send_to(&self, address: &str, payload: &[u8]) -> Result<()> {
-        if payload.len() > CEILING {
-            return Err(protocol_error(format!(
-                "{} bytes is over the {CEILING} one set carries",
-                payload.len()
-            )));
-        }
+        ceiling::within(payload.len(), CEILING, "one set carries")?;
         Self::new("127.0.0.1:0")
             .about(self.instance)
             .timing_out_after(self.timeout.unwrap_or(LOOPBACK_TIMEOUT))
