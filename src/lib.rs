@@ -35,7 +35,8 @@ use transport::error::{Result, protocol_error};
 use transport::listening::{Accepting, Listening};
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::socket;
-use transport::{Arrived, Directions, Transport};
+use transport::{Arrived, Configured, Directions, Transport};
+use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
 
 use crate::encapsulation::RR_OVERHEAD;
 
@@ -43,6 +44,9 @@ use crate::encapsulation::RR_OVERHEAD;
 /// length names, less the `SendRRData` items and the request's service and
 /// path. One attribute is set in one message; the protocol has no segments.
 pub const CEILING: usize = 65_535 - RR_OVERHEAD - cip::REQUEST_OVERHEAD;
+
+/// The assembly instance a Location speaks about unless it names another.
+pub const DEFAULT_INSTANCE: u8 = 100;
 
 #[derive(Clone)]
 pub struct EtherNetIpTransport {
@@ -57,7 +61,7 @@ impl EtherNetIpTransport {
     pub fn new(bind: impl Into<String>) -> Self {
         Self {
             bind: bind.into(),
-            instance: 100,
+            instance: DEFAULT_INSTANCE,
             timeout: None,
         }
     }
@@ -145,6 +149,44 @@ impl Transport for EtherNetIpTransport {
     }
 }
 
+impl Configured for EtherNetIpTransport {
+    /// The address is the adapter's host and port: where a Location connects
+    /// as a scanner, or listens as an adapter.
+    const SETTINGS: &'static Settings = &Settings {
+        technology: env!("CARGO_PKG_NAME"),
+        settings: &[
+            Setting {
+                name: "instance",
+                kind: Kind::Integer {
+                    minimum: 1,
+                    maximum: 255,
+                },
+                presence: Presence::Default(Fixed::Integer(DEFAULT_INSTANCE as i64)),
+                meaning: "The assembly instance whose data attribute is the Stream.",
+                applies: Applies::Both,
+            },
+            Setting {
+                name: "timeout",
+                kind: Kind::Duration,
+                presence: Presence::Optional,
+                meaning: "How long a peer that stops mid-message is waited on; unbounded when \
+                          left out.",
+                applies: Applies::Both,
+            },
+        ],
+    };
+
+    fn configured(address: &str, settings: &Read) -> Result<Self> {
+        let instance = u8::try_from(settings.integer("instance"))
+            .map_err(|_| protocol_error("an assembly instance is at most 255"))?;
+        let transport = Self::new(address).about(instance);
+        Ok(match settings.optional_duration("timeout") {
+            Some(timeout) => transport.timing_out_after(timeout),
+            None => transport,
+        })
+    }
+}
+
 impl EtherNetIpTransport {
     /// Both ends on this machine: an ephemeral local port, the loopback
     /// timeout on either side of the session.
@@ -194,6 +236,7 @@ mod tests {
     use super::*;
     use std::io::Write;
     use transport::payload::edge_payloads;
+    use xcore::settings::Given;
 
     /// The shapes a protocol breaks on, as the Playground lists them.
     fn payloads() -> Vec<(&'static str, Vec<u8>)> {
@@ -205,6 +248,29 @@ mod tests {
                 .collect(),
         )]);
         payloads
+    }
+
+    #[test]
+    fn ethernet_ip_declares_its_settings_and_reads_through_them() {
+        assert_eq!(
+            EtherNetIpTransport::SETTINGS.problems(),
+            Vec::<String>::new()
+        );
+        let given = [
+            ("instance".to_string(), Given::Integer(150)),
+            ("timeout".to_string(), Given::Text("2s".to_string())),
+        ];
+        let built =
+            EtherNetIpTransport::open("plc:44818", Applies::Send, &given).expect("configured");
+        assert_eq!(built.instance, 150);
+        assert_eq!(built.timeout, Some(Duration::from_secs(2)));
+        let plain = EtherNetIpTransport::open("plc:44818", Applies::Receive, &[]).expect("plain");
+        assert_eq!(plain.instance, DEFAULT_INSTANCE);
+        let given = [("slot".to_string(), Given::Integer(1))];
+        let Err(refused) = EtherNetIpTransport::open("plc:44818", Applies::Receive, &given) else {
+            panic!("slot is not a setting");
+        };
+        assert!(refused.message.contains("\"slot\""), "{}", refused.message);
     }
 
     #[test]
