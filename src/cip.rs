@@ -19,7 +19,6 @@ pub const DATA_ATTRIBUTE: u16 = 3;
 pub const SUCCESS: u8 = 0x00;
 pub const PATH_DESTINATION_UNKNOWN: u8 = 0x05;
 pub const SERVICE_NOT_SUPPORTED: u8 = 0x08;
-pub const ATTRIBUTE_NOT_SETTABLE: u8 = 0x0e;
 
 /// The service byte, the path size byte, and a path of three eight-bit
 /// logical segments.

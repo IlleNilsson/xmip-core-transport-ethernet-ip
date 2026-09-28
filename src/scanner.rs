@@ -1,13 +1,14 @@
 //! The scanner's side of one session: register, get and set an assembly's
-//! data attribute by explicit message, unregister. What a Location does on
-//! every receive and every send.
+//! data attribute by explicit message, unregister. A Location keeps its
+//! session between gets and sets.
 
 use std::io::Write;
 use std::net::TcpStream;
 use std::time::Duration;
 
-use transport::ceiling;
+use net::ceiling;
 use transport::error::{Result, classify, protocol_error};
+use transport::pool::{Pooled, alive};
 use transport::socket;
 
 use crate::CEILING;
@@ -113,5 +114,12 @@ impl Scanner {
             .map_err(|e| classify("writing to the adapter", &e))?;
         Packet::read(&mut self.stream)?
             .ok_or_else(|| protocol_error("the adapter closed before answering"))
+    }
+}
+
+impl Pooled for Scanner {
+    /// While the adapter has not closed the session's connection.
+    fn usable(&mut self) -> bool {
+        alive(&self.stream)
     }
 }
