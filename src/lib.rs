@@ -29,13 +29,12 @@ use std::time::Duration;
 pub use adapter::Adapter;
 pub use cip::{Path, Reply, Request};
 pub use encapsulation::Packet;
+use net::{Target, ceiling};
 pub use scanner::Scanner;
-use transport::ceiling;
 use transport::error::{Result, protocol_error};
 use transport::listening::{Accepting, Listening};
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::socket;
-use transport::{Arrived, Configured, Directions, Transport};
+use transport::{Arrived, Configured, Directions, Pool, Transport};
 use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
 
 use crate::encapsulation::RR_OVERHEAD;
@@ -46,13 +45,16 @@ use crate::encapsulation::RR_OVERHEAD;
 pub const CEILING: usize = 65_535 - RR_OVERHEAD - cip::REQUEST_OVERHEAD;
 
 /// The assembly instance a Location speaks about unless it names another.
-pub const DEFAULT_INSTANCE: u8 = 100;
+const DEFAULT_INSTANCE: u8 = 100;
 
 #[derive(Clone)]
 pub struct EtherNetIpTransport {
     bind: String,
     instance: u8,
     timeout: Option<Duration>,
+    /// The sessions a receive gets on and a send sets on, registered once
+    /// per adapter and kept.
+    sessions: Pool<Scanner>,
 }
 
 impl EtherNetIpTransport {
@@ -63,6 +65,7 @@ impl EtherNetIpTransport {
             bind: bind.into(),
             instance: DEFAULT_INSTANCE,
             timeout: None,
+            sessions: Pool::new(),
         }
     }
 
@@ -107,7 +110,9 @@ impl EtherNetIpTransport {
     /// `enip://host:44818/<instance>` or `host:port` as the address and the
     /// instance to speak about.
     fn resolve(&self, target: &str) -> Result<(String, u8)> {
-        let Some((authority, path)) = socket::target("enip", target) else {
+        let Some((authority, path)) =
+            Target::under(&["enip"], target).map(|named| (named.authority(), named.path()))
+        else {
             return Ok((target.to_string(), self.instance));
         };
         let instance = if path.is_empty() {
@@ -129,23 +134,29 @@ impl Transport for EtherNetIpTransport {
         Directions::BOTH
     }
 
-    /// One get of the assembly: its data as one Stream.
+    /// One get of the assembly, on the session kept for the adapter and
+    /// registered on the first receive: its data as one Stream.
     fn receive(&self) -> Result<Vec<Arrived>> {
-        let mut scanner = self.connect(&self.bind)?;
-        let bytes = scanner.get(self.instance)?;
-        scanner.unregister()?;
+        let bytes = self.sessions.exchange(
+            self.bind.as_str(),
+            || self.connect(&self.bind),
+            |scanner| scanner.get(self.instance),
+        )?;
         Ok(vec![Arrived::new(
             format!("enip://{}/assembly/{}", self.bind, self.instance),
             bytes,
         )])
     }
 
-    /// One set of the assembly `target` names.
+    /// One set of the assembly `target` names, on the session kept for its
+    /// adapter and registered on the first send.
     fn send(&self, target: &str, bytes: &[u8]) -> Result<()> {
         let (address, instance) = self.resolve(target)?;
-        let mut scanner = self.connect(&address)?;
-        scanner.set(instance, bytes)?;
-        scanner.unregister()
+        self.sessions.exchange(
+            address.as_str(),
+            || self.connect(&address),
+            |scanner| scanner.set(instance, bytes),
+        )
     }
 }
 
@@ -308,21 +319,28 @@ mod tests {
             EtherNetIpTransport::new("127.0.0.1:0").timing_out_after(Duration::from_secs(2));
         let (listener, address) = adapter.bind().expect("bind");
         let serving = std::thread::spawn(move || {
-            // Two sessions in turn: a Location's get, then a scanner's set.
+            // Two sessions in turn: a Location's get and set on its one
+            // kept session, then a scanner's own.
             let mut first = adapter
                 .accept_one(&listener)
                 .expect("accept")
                 .with_assembly(100, vec![1, 2, 3]);
             first.serve().expect("serve");
+            let set = first.assembly(100).map(<[u8]>::to_vec);
             let mut second = adapter
                 .accept_one(&listener)
                 .expect("accept again")
                 .with_assembly(150, vec![0]);
             second.serve().expect("serve again");
-            second.assembly(150).map(<[u8]>::to_vec)
+            (set, second.assembly(150).map(<[u8]>::to_vec))
         });
         let near = EtherNetIpTransport::new(&address).timing_out_after(Duration::from_secs(2));
-        let arrived = near.receive().expect("get");
+        let location = EtherNetIpTransport::new(&address).timing_out_after(Duration::from_secs(2));
+        let arrived = location.receive().expect("get");
+        location.send(&address, &[4, 5]).expect("set");
+        assert_eq!(location.sessions.opened(), 1);
+        // Its kept session closes with it.
+        drop(location);
         assert_eq!(arrived[0].bytes, [1, 2, 3]);
         assert_eq!(
             arrived[0].origin_uri,
@@ -334,7 +352,65 @@ mod tests {
         assert!(error.message.contains("0x05"), "{error}");
         scanner.set(150, &[9, 9]).expect("set");
         scanner.unregister().expect("unregister");
-        assert_eq!(serving.join().expect("thread"), Some(vec![9, 9]));
+        let (kept, apart) = serving.join().expect("thread");
+        assert_eq!(kept, Some(vec![4, 5]));
+        assert_eq!(apart, Some(vec![9, 9]));
+    }
+
+    #[test]
+    fn a_thousand_receives_register_one_session() {
+        const RECEIVES: usize = 1000;
+        let adapter =
+            EtherNetIpTransport::new("127.0.0.1:0").timing_out_after(Duration::from_secs(5));
+        let (listener, address) = adapter.bind().expect("bind");
+        let serving = std::thread::spawn(move || {
+            // One accept: every get arrives on the one session.
+            let mut session = adapter
+                .accept_one(&listener)
+                .expect("accept")
+                .with_assembly(100, vec![4, 2]);
+            session.serve().expect("serve");
+        });
+        let near = EtherNetIpTransport::new(&address).timing_out_after(Duration::from_secs(5));
+        let began = std::time::Instant::now();
+        for _ in 0..RECEIVES {
+            assert_eq!(near.receive().expect("get")[0].bytes, [4, 2]);
+        }
+        let took = began.elapsed();
+        // Generous for a debug build under load: a millisecond a get.
+        assert!(took < Duration::from_millis(RECEIVES as u64), "{took:?}");
+        assert_eq!(near.sessions.opened(), 1);
+        drop(near);
+        serving.join().expect("served");
+    }
+
+    #[test]
+    fn a_thousand_sends_register_one_session() {
+        const SENDS: usize = 1000;
+        let adapter =
+            EtherNetIpTransport::new("127.0.0.1:0").timing_out_after(Duration::from_secs(5));
+        let (listener, address) = adapter.bind().expect("bind");
+        let serving = std::thread::spawn(move || {
+            // One accept: every set arrives on the one session.
+            let mut session = adapter
+                .accept_one(&listener)
+                .expect("accept")
+                .with_assembly(100, vec![0]);
+            session.serve().expect("serve");
+            session.assembly(100).map(<[u8]>::to_vec)
+        });
+        let near = EtherNetIpTransport::new(&address).timing_out_after(Duration::from_secs(5));
+        let began = std::time::Instant::now();
+        for n in 0..SENDS {
+            near.send(&address, &[u8::try_from(n % 256).expect("a byte")])
+                .expect("set");
+        }
+        let took = began.elapsed();
+        // Generous for a debug build under load: a millisecond a set.
+        assert!(took < Duration::from_millis(SENDS as u64), "{took:?}");
+        assert_eq!(near.sessions.opened(), 1);
+        drop(near);
+        assert_eq!(serving.join().expect("served"), Some(vec![231]));
     }
 
     #[test]
