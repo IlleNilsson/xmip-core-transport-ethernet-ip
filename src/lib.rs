@@ -14,6 +14,11 @@
 //! The carrier is `xmip-core-transport-tcp`: the scanner connects and the
 //! adapter listens through it.
 //!
+//! **A receive is a `Get_Attribute_Single`, which consumes nothing at the
+//! adapter**, so its verdict has nothing to tell it, whichever it is: a cycle
+//! that did not complete loses nothing, and the next get reads the assembly
+//! again.
+//!
 //! The origin URI names the adapter and the assembly:
 //! `enip://host:44818/assembly/100`. A target is `enip://host:44818/100`
 //! for another instance, or `host:port` for the configured one.
@@ -34,7 +39,7 @@ pub use scanner::Scanner;
 use transport::error::{Result, protocol_error};
 use transport::listening::{Accepting, Listening};
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::{Arrived, Configured, Directions, Pool, Transport};
+use transport::{Acknowledgement, Arrived, Configured, Directions, Pool, Taken, Transport};
 use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
 
 use crate::encapsulation::RR_OVERHEAD;
@@ -134,17 +139,25 @@ impl Transport for EtherNetIpTransport {
         Directions::BOTH
     }
 
+    fn arrivals(&self) -> transport::Arrivals {
+        transport::Arrivals::Ordered("a poll reads again what is not yet told")
+    }
+
     /// One get of the assembly, on the session kept for the adapter and
-    /// registered on the first receive: its data as one Stream.
+    /// registered on the first receive: its data as one Stream, whole. The
+    /// verdict has nothing to tell the adapter, whichever it is:
+    /// `Get_Attribute_Single` consumes nothing, so a cycle that did not
+    /// complete loses nothing — the next get reads the assembly again.
     fn receive(&self) -> Result<Vec<Arrived>> {
         let bytes = self.sessions.exchange(
             self.bind.as_str(),
             || self.connect(&self.bind),
             |scanner| scanner.get(self.instance),
         )?;
-        Ok(vec![Arrived::new(
+        Ok(vec![Arrived::whole(
             format!("enip://{}/assembly/{}", self.bind, self.instance),
             bytes,
+            Acknowledgement::unconsumed(),
         )])
     }
 
@@ -208,7 +221,7 @@ impl EtherNetIpTransport {
 }
 
 impl Accepting for EtherNetIpTransport {
-    fn take_one(self, listener: &TcpListener) -> Result<Arrived> {
+    fn take_one(self, listener: &TcpListener) -> Result<Taken> {
         let instance = self.instance;
         let mut adapter = self
             .accept_one(listener)?
@@ -218,7 +231,7 @@ impl Accepting for EtherNetIpTransport {
             .assembly(instance)
             .ok_or_else(|| protocol_error("the assembly went missing"))?
             .to_vec();
-        Ok(Arrived::new(adapter.origin(instance), bytes))
+        Ok(Taken::new(adapter.origin(instance), bytes))
     }
 }
 
@@ -336,16 +349,15 @@ mod tests {
         });
         let near = EtherNetIpTransport::new(&address).timing_out_after(Duration::from_secs(2));
         let location = EtherNetIpTransport::new(&address).timing_out_after(Duration::from_secs(2));
-        let arrived = location.receive().expect("get");
+        let arrived = location.receive().expect("get").remove(0);
+        assert!(arrived.defers(), "a get consumes nothing: nothing to lose");
+        let arrived = arrived.taken().expect("taken");
         location.send(&address, &[4, 5]).expect("set");
         assert_eq!(location.sessions.opened(), 1);
         // Its kept session closes with it.
         drop(location);
-        assert_eq!(arrived[0].bytes, [1, 2, 3]);
-        assert_eq!(
-            arrived[0].origin_uri,
-            format!("enip://{address}/assembly/100")
-        );
+        assert_eq!(arrived.bytes, [1, 2, 3]);
+        assert_eq!(arrived.origin_uri, format!("enip://{address}/assembly/100"));
         let mut scanner = near.connect(&address).expect("connect");
         assert_ne!(scanner.session(), 0);
         let error = scanner.get(7).expect_err("no assembly 7");
@@ -374,7 +386,8 @@ mod tests {
         let near = EtherNetIpTransport::new(&address).timing_out_after(Duration::from_secs(5));
         let began = std::time::Instant::now();
         for _ in 0..RECEIVES {
-            assert_eq!(near.receive().expect("get")[0].bytes, [4, 2]);
+            let got = near.receive().expect("get").remove(0);
+            assert_eq!(got.taken().expect("taken").bytes, [4, 2]);
         }
         let took = began.elapsed();
         // Generous for a debug build under load: a millisecond a get.
