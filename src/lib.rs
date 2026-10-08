@@ -36,6 +36,7 @@ pub use cip::{Path, Reply, Request};
 pub use encapsulation::Packet;
 use net::{Target, ceiling};
 pub use scanner::Scanner;
+use transport::ArrivalIdentity;
 use transport::error::{Result, protocol_error};
 use transport::listening::{Accepting, Listening};
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
@@ -154,11 +155,14 @@ impl Transport for EtherNetIpTransport {
             || self.connect(&self.bind),
             |scanner| scanner.get(self.instance),
         )?;
-        Ok(vec![Arrived::whole(
-            format!("enip://{}/assembly/{}", self.bind, self.instance),
-            bytes,
-            Acknowledgement::unconsumed(),
-        )])
+        Ok(vec![
+            Arrived::whole(
+                format!("enip://{}/assembly/{}", self.bind, self.instance),
+                bytes,
+                Acknowledgement::unconsumed(),
+            )
+            .scheduled(),
+        ])
     }
 
     /// One set of the assembly `target` names, on the session kept for its
@@ -236,6 +240,12 @@ impl Accepting for EtherNetIpTransport {
 }
 
 impl Loopback for EtherNetIpTransport {
+    fn arrival_identity(&self) -> ArrivalIdentity {
+        ArrivalIdentity::Unnamed(
+            "Xmip reads the adapter's assembly itself, so the adapter it read is in its origin",
+        )
+    }
+
     /// One attribute is set in one encapsulation packet, and the packet's
     /// length is sixteen bits.
     fn ceiling(&self) -> Option<usize> {
