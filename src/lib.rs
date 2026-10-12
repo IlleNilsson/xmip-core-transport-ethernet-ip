@@ -144,6 +144,10 @@ impl Transport for EtherNetIpTransport {
         transport::Arrivals::Ordered("a poll reads again what is not yet told")
     }
 
+    fn waiting(&self) -> transport::Waiting {
+        transport::Waiting::Polled("a get of the assembly returns at once")
+    }
+
     /// One get of the assembly, on the session kept for the adapter and
     /// registered on the first receive: its data as one Stream, whole. The
     /// verdict has nothing to tell the adapter, whichever it is:
