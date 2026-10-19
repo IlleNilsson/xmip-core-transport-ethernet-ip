@@ -153,7 +153,7 @@ impl Transport for EtherNetIpTransport {
     /// verdict has nothing to tell the adapter, whichever it is:
     /// `Get_Attribute_Single` consumes nothing, so a cycle that did not
     /// complete loses nothing — the next get reads the assembly again.
-    fn receive(&self) -> Result<Vec<Arrived>> {
+    fn receive_up_to(&self, _most: usize) -> Result<Vec<Arrived>> {
         let bytes = self.sessions.exchange(
             self.bind.as_str(),
             || self.connect(&self.bind),
@@ -169,9 +169,14 @@ impl Transport for EtherNetIpTransport {
         ])
     }
 
+    fn sending(&self) -> transport::Sending {
+        transport::Sending::Gathered("one CIP message carries the whole body")
+    }
+
     /// One set of the assembly `target` names, on the session kept for its
     /// adapter and registered on the first send.
-    fn send(&self, target: &str, bytes: &[u8]) -> Result<()> {
+    fn send_from(&self, target: &str, outgoing: transport::Outgoing<'_>) -> Result<()> {
+        let bytes: &[u8] = &outgoing.gather()?;
         let (address, instance) = self.resolve(target)?;
         self.sessions.exchange(
             address.as_str(),
