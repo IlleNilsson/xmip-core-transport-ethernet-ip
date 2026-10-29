@@ -117,7 +117,7 @@ impl EtherNetIpTransport {
     /// instance to speak about.
     fn resolve(&self, target: &str) -> Result<(String, u8)> {
         let Some((authority, path)) =
-            Target::under(&["enip"], target).map(|named| (named.authority(), named.path()))
+            Target::under(Self::SCHEMES, target).map(|named| (named.authority(), named.path()))
         else {
             return Ok((target.to_string(), self.instance));
         };
@@ -212,6 +212,9 @@ impl Configured for EtherNetIpTransport {
             },
         ],
     };
+
+    /// The schemes a Location's address is entered with to choose this technology.
+    const SCHEMES: &'static [&'static str] = &["enip"];
 
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let instance = u8::try_from(settings.integer("instance"))
