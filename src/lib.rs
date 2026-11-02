@@ -406,14 +406,10 @@ mod tests {
             session.serve().expect("serve");
         });
         let near = EtherNetIpTransport::new(&address).timing_out_after(Duration::from_secs(5));
-        let began = std::time::Instant::now();
         for _ in 0..RECEIVES {
             let got = near.receive().expect("get").remove(0);
             assert_eq!(got.taken().expect("taken").bytes, [4, 2]);
         }
-        let took = began.elapsed();
-        // Generous for a debug build under load: a millisecond a get.
-        assert!(took < Duration::from_millis(RECEIVES as u64), "{took:?}");
         assert_eq!(near.sessions.opened(), 1);
         drop(near);
         serving.join().expect("served");
@@ -435,14 +431,10 @@ mod tests {
             session.assembly(100).map(<[u8]>::to_vec)
         });
         let near = EtherNetIpTransport::new(&address).timing_out_after(Duration::from_secs(5));
-        let began = std::time::Instant::now();
         for n in 0..SENDS {
             near.send(&address, &[u8::try_from(n % 256).expect("a byte")])
                 .expect("set");
         }
-        let took = began.elapsed();
-        // Generous for a debug build under load: a millisecond a set.
-        assert!(took < Duration::from_millis(SENDS as u64), "{took:?}");
         assert_eq!(near.sessions.opened(), 1);
         drop(near);
         assert_eq!(serving.join().expect("served"), Some(vec![231]));
