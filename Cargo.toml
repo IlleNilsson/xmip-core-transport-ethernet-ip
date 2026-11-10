@@ -22,7 +22,7 @@ net = { package = "xmip-core-library-net", git = "https://github.com/IlleNilsson
 # The settings this technology declares (xcore::settings), read through
 # transport::Configured (ADR-0064, amendment 2026-09-26).
 xcore = { package = "xmip-core", git = "https://github.com/IlleNilsson/xmip-core", branch = "main" }
-# The carrier, declared in architecture.xmip: EtherNet/IP encapsulation rides on
+# The carrier, declared in architecture.toml: EtherNet/IP encapsulation rides on
 # a TCP connection, so the tcp technology is the carrier.
 tcp = { package = "xmip-core-transport-tcp", git = "https://github.com/IlleNilsson/xmip-core-transport-tcp", branch = "main" }
 
