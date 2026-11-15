@@ -82,13 +82,6 @@ impl EtherNetIpTransport {
         self
     }
 
-    /// Give up on a peer that stops mid-message.
-    #[must_use]
-    pub const fn timing_out_after(mut self, timeout: Duration) -> Self {
-        self.timeout = Some(timeout);
-        self
-    }
-
     /// Bind through the carrier and report the address actually assigned.
     ///
     /// # Errors
@@ -202,28 +195,26 @@ impl Configured for EtherNetIpTransport {
                 meaning: "The assembly instance whose data attribute is the Stream.",
                 applies: Applies::Both,
             },
-            Setting {
-                name: "timeout",
-                kind: Kind::Duration,
-                presence: Presence::Optional,
-                meaning: "How long a peer that stops mid-message is waited on; unbounded when \
-                          left out.",
-                applies: Applies::Both,
-            },
+            transport::configured::timeout(
+                Applies::Both,
+                None,
+                "How long a peer that stops mid-message is waited on; unbounded when \
+                 left out.",
+            ),
         ],
     };
 
     /// The schemes a Location's address is entered with to choose this technology.
     const SCHEMES: &'static [&'static str] = &["enip"];
 
+    fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
+        Some(&mut self.timeout)
+    }
+
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let instance = u8::try_from(settings.integer("instance"))
             .map_err(|_| protocol_error("an assembly instance is at most 255"))?;
-        let transport = Self::new(address).about(instance);
-        Ok(match settings.optional_duration("timeout") {
-            Some(timeout) => transport.timing_out_after(timeout),
-            None => transport,
-        })
+        Ok(Self::new(address).about(instance))
     }
 }
 
