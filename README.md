@@ -13,6 +13,10 @@ nothing at the adapter. Its verdict therefore has nothing to tell the adapter,
 whichever it is: a receive cycle that did not complete loses nothing, and the
 next get reads the assembly again. The data arrives whole.
 
+## The declaration
+
+What a Location of this technology is configured with is two `const`s in its `declaration` module, `src/declaration.rs`, beside the code, which `Configured` reads (ADR-0064, amendment 2026-11-26): `declaration::SETTINGS`, `instance` and `timeout`, and `SCHEMES`, `enip`. The assembly instance `instance` defaults to, `DEFAULT_INSTANCE`, is there too, and the code reads it from there. Built with its `declaration` feature alone (`--no-default-features --features declaration`), the crate is those and nothing more: its code and every crate the code is built on — the tcp technology it rides on among them — are behind the default feature. So the library the surfaces load can carry it without the code, for the language server and the desktop to suggest and check an `EtherNet/IP` Location's settings though no node in their process loaded the technology, once the gathering crate of open problem 48 links it. `test/Declaration.Test.ps1` in the estate holds that the declaration builds nothing the transport capability does not.
+
 ## Toolchain
 
 `rust-toolchain.toml` pins the toolchain for the whole estate. Do not change it

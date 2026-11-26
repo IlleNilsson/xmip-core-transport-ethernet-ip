@@ -22,37 +22,63 @@
 //! The origin URI names the adapter and the assembly:
 //! `enip://host:44818/assembly/100`. A target is `enip://host:44818/100`
 //! for another instance, or `host:port` for the configured one.
+//!
+//! **Built with its `declaration` feature alone** the crate is
+//! [`declaration`], what a Location of it is configured with, and none of
+//! the code above, which is behind the default feature: what the surfaces'
+//! library carries (ADR-0064, amendment 2026-11-26).
 
+#[cfg(feature = "default")]
 pub mod adapter;
+#[cfg(feature = "default")]
 pub mod cip;
+#[cfg(feature = "declaration")]
+pub mod declaration;
+#[cfg(feature = "default")]
 pub mod encapsulation;
+#[cfg(feature = "default")]
 pub mod scanner;
 
+#[cfg(feature = "default")]
 use std::net::TcpListener;
+#[cfg(feature = "default")]
 use std::time::Duration;
 
+#[cfg(feature = "default")]
 pub use adapter::Adapter;
+#[cfg(feature = "default")]
 pub use cip::{Path, Reply, Request};
+#[cfg(feature = "default")]
 pub use encapsulation::Packet;
+#[cfg(feature = "default")]
 use net::{Target, ceiling};
+#[cfg(feature = "default")]
 pub use scanner::Scanner;
+#[cfg(feature = "default")]
 use transport::ArrivalIdentity;
+#[cfg(feature = "default")]
 use transport::error::{Result, protocol_error};
+#[cfg(feature = "default")]
 use transport::listening::{Accepting, Listening};
+#[cfg(feature = "default")]
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
+#[cfg(feature = "default")]
 use transport::{Acknowledgement, Arrived, Configured, Directions, Pool, Taken, Transport};
-use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
+#[cfg(feature = "default")]
+use xcore::settings::{Read, Settings};
 
+#[cfg(feature = "default")]
+use crate::declaration::DEFAULT_INSTANCE;
+#[cfg(feature = "default")]
 use crate::encapsulation::RR_OVERHEAD;
 
 /// The largest Stream one set carries: what the sixteen-bit encapsulation
 /// length names, less the `SendRRData` items and the request's service and
 /// path. One attribute is set in one message; the protocol has no segments.
+#[cfg(feature = "default")]
 pub const CEILING: usize = 65_535 - RR_OVERHEAD - cip::REQUEST_OVERHEAD;
 
-/// The assembly instance a Location speaks about unless it names another.
-const DEFAULT_INSTANCE: u8 = 100;
-
+#[cfg(feature = "default")]
 #[derive(Clone)]
 pub struct EtherNetIpTransport {
     bind: String,
@@ -63,6 +89,7 @@ pub struct EtherNetIpTransport {
     sessions: Pool<Scanner>,
 }
 
+#[cfg(feature = "default")]
 impl EtherNetIpTransport {
     /// Listen or connect at `bind`, about assembly instance 100.
     #[must_use]
@@ -124,6 +151,7 @@ impl EtherNetIpTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Transport for EtherNetIpTransport {
     fn name(&self) -> &'static str {
         "ethernet-ip"
@@ -179,33 +207,10 @@ impl Transport for EtherNetIpTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Configured for EtherNetIpTransport {
-    /// The address is the adapter's host and port: where a Location connects
-    /// as a scanner, or listens as an adapter.
-    const SETTINGS: &'static Settings = &Settings {
-        technology: env!("CARGO_PKG_NAME"),
-        settings: &[
-            Setting {
-                name: "instance",
-                kind: Kind::Integer {
-                    minimum: 1,
-                    maximum: 255,
-                },
-                presence: Presence::Default(Fixed::Integer(DEFAULT_INSTANCE as i64)),
-                meaning: "The assembly instance whose data attribute is the Stream.",
-                applies: Applies::Both,
-            },
-            transport::configured::timeout(
-                Applies::Both,
-                None,
-                "How long a peer that stops mid-message is waited on; unbounded when \
-                 left out.",
-            ),
-        ],
-    };
-
-    /// The schemes a Location's address is entered with to choose this technology.
-    const SCHEMES: &'static [&'static str] = &["enip"];
+    const SETTINGS: &'static Settings = declaration::SETTINGS;
+    const SCHEMES: &'static [&'static str] = declaration::SCHEMES;
 
     fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
         Some(&mut self.timeout)
@@ -218,6 +223,7 @@ impl Configured for EtherNetIpTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl EtherNetIpTransport {
     /// Both ends on this machine: an ephemeral local port, the loopback
     /// timeout on either side of the session.
@@ -227,6 +233,7 @@ impl EtherNetIpTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Accepting for EtherNetIpTransport {
     fn take_one(self, listener: &TcpListener) -> Result<Taken> {
         let instance = self.instance;
@@ -242,6 +249,7 @@ impl Accepting for EtherNetIpTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Loopback for EtherNetIpTransport {
     fn arrival_identity(&self) -> ArrivalIdentity {
         ArrivalIdentity::Unnamed(
@@ -273,7 +281,7 @@ mod tests {
     use super::*;
     use std::io::Write;
     use transport::payload::edge_payloads;
-    use xcore::settings::Given;
+    use xcore::settings::{Applies, Given};
 
     /// The shapes a protocol breaks on, as the System Tests list them.
     fn payloads() -> Vec<(&'static str, Vec<u8>)> {
